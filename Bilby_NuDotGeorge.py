@@ -48,11 +48,11 @@ def get_gp(profile, t):
     return gp
 
 
-def drive_gp(profile, t, amplitude, scale, noise):
-    kernel = amplitude * kernels.ExpSquaredKernel(metric=scale)
+def drive_gp(profile, t, logamplitude, scale, lognoise):
+    kernel = np.exp(logamplitude) * kernels.ExpSquaredKernel(metric=scale)
     y = profile
     gp = george.GP(kernel, mean=np.mean(y), fit_mean=True,
-               white_noise=np.log(noise), fit_white_noise=True)
+               white_noise=lognoise, fit_white_noise=True)
 # You need to compute the GP once before starting the optimization.
     gp.compute(t)
     return gp
@@ -157,30 +157,43 @@ log_A_posts = result.posterior["kernel:k1:log_constant"].values
 log_M00_posts = result.posterior["kernel:k2:metric:log_M_0_0"].values
 white_noise = result.posterior["white_noise:value"].values
 
+v1 = np.random.choice(log_A_posts)
+v2 = np.random.choice(log_M00_posts)
+v3 = np.random.choice(white_noise)
 
 nudot_arr = np.zeros((1000, len(dates)))
+#ml_gp = drive_gp(residuals, dates, np.exp(v1), np.exp(v2), np.exp(v3))
+ml_gp = drive_gp(residuals, dates, v1, np.exp(v2), v3)
+kernel_params = ml_gp.get_parameter_vector()
 for i in range(0, 1000):
 
     v1 = np.random.choice(log_A_posts)
     v2 = np.random.choice(log_M00_posts)
     v3 = np.random.choice(white_noise)
 
-    ml_gp = drive_gp(residuals, dates, np.exp(v1), np.exp(v2), np.exp(v3))
+    #mean (cannot set this way but just illustrating)    
+        #kernel_params[0] = 0.0
+    #log noise (also cannot set this way)
+        #kernel_params[1] = v3
+    # log amplitude
+    kernel_params[2] = v1
+    # metric
+    kernel_params[3] = np.exp(v2)
 
-    kernel_params = ml_gp.get_parameter_vector()
-    kernel_params[3] = np.exp(kernel_params[3])
-    kernelprime = 100 * kernels.ExpSquaredPrimeKernel(10.0)
+    # set up dderivative kernel with dummy parameters
     kerneldprime = 100 * kernels.ExpSquaredDoublePrimeKernel(10.0)
-    kernelprime.set_parameter_vector(kernel_params[2:4])
-    kerneldprime.set_parameter_vector(kernel_params[2:4])
+    # Set metric and amplitude for dderivative kernel
+    kerneldprime.set_parameter_vector(kernel_params[2:])
+    # Set mean to 0 and noise to v3
     ml_gp.set_parameter('mean:value',0.0)
+    ml_gp.set_parameter('white_noise:value', v3)
 
     ml_mu, _ = ml_gp.predict(residuals, dates, return_var=True, kernel=kerneldprime)
     nudot_arr[i,:] = f1 - ml_mu/period/86400.**2
 
-med = np.percentile(nudot_arr, 0.5, axis=0)
-low = med - np.percentile(nudot_arr, 0.16, axis=0)
-upp = np.percentile(nudot_arr, 0.84, axis=0) - med
+med = np.percentile(nudot_arr, 50., axis=0)
+low = med - np.percentile(nudot_arr, 16., axis=0)
+upp = np.percentile(nudot_arr, 84., axis=0) - med
 
 mjds = data[:,0]
 
