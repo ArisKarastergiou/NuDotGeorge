@@ -84,8 +84,8 @@ outfile = os.path.splitext(filebase)[0]
 datfile = outfile + '.dat'
 pulsar = args.pulsar
 
-if not (os.path.exists('./{0}/'.format(pulsar))):
-        os.mkdir('./{0}/'.format(pulsar))
+#if not (os.path.exists('./{0}/'.format(pulsar))):
+#        os.mkdir('./{0}/'.format(pulsar))
         
 
 # Load the data
@@ -93,14 +93,14 @@ data = np.genfromtxt(filename, delimiter=" ")
 residuals = data[:,1]
 errors = data[:,2] * 1e-6
 dates = data[:,0]-data[0,0]
-plt.figure()
-plt.title(pulsar)
-plt.plot(dates, residuals, ".")
-plt.xlabel('day')
-plt.ylabel('residual [sec]')
-# plt.savefig('./outdir/'+pulsar+'_Residuals.png')
-plt.show()
-plt.close()
+#plt.figure()
+#plt.title(pulsar)
+#plt.plot(dates, residuals, ".")
+#plt.xlabel('day')
+#plt.ylabel('residual [sec]')
+#plt.savefig('./outdir/'+pulsar+'_Residuals.png')
+##plt.show()
+#plt.close()
 
 # Load the parfile to extract epoch and nudot
 q = open(parfile)
@@ -140,6 +140,7 @@ if os.path.exists("outdir/{0}_result.json".format(pulsar)) == False:
         priors=priors,
         outdir="./outdir",
         label=pulsar,
+        npool=16,
         sampler="dynesty",
         sample="rslice",
         nlive=1024,
@@ -157,28 +158,27 @@ log_A_posts = result.posterior["kernel:k1:log_constant"].values
 log_M00_posts = result.posterior["kernel:k2:metric:log_M_0_0"].values
 white_noise = result.posterior["white_noise:value"].values
 
-v1 = np.random.choice(log_A_posts)
-v2 = np.random.choice(log_M00_posts)
-v3 = np.random.choice(white_noise)
+np.random.seed(0)
+v1 = np.random.choice(log_A_posts,1000)
+v2 = np.random.choice(log_M00_posts,1000)
+v3 = np.random.choice(white_noise,1000)
+
 
 nudot_arr = np.zeros((1000, len(dates)))
 #ml_gp = drive_gp(residuals, dates, np.exp(v1), np.exp(v2), np.exp(v3))
-ml_gp = drive_gp(residuals, dates, v1, np.exp(v2), v3)
+ml_gp = drive_gp(residuals, dates, v1[0], np.exp(v2[0]), v3[0])
 kernel_params = ml_gp.get_parameter_vector()
+#repeat the same random numbers
 for i in range(0, 1000):
-
-    v1 = np.random.choice(log_A_posts)
-    v2 = np.random.choice(log_M00_posts)
-    v3 = np.random.choice(white_noise)
 
     #mean (cannot set this way but just illustrating)    
         #kernel_params[0] = 0.0
     #log noise (also cannot set this way)
         #kernel_params[1] = v3
     # log amplitude
-    kernel_params[2] = v1
+    kernel_params[2] = v1[i]
     # metric
-    kernel_params[3] = np.exp(v2)
+    kernel_params[3] = np.exp(v2[i])
 
     # set up dderivative kernel with dummy parameters
     kerneldprime = 100 * kernels.ExpSquaredDoublePrimeKernel(10.0)
@@ -186,7 +186,7 @@ for i in range(0, 1000):
     kerneldprime.set_parameter_vector(kernel_params[2:])
     # Set mean to 0 and noise to v3
     ml_gp.set_parameter('mean:value',0.0)
-    ml_gp.set_parameter('white_noise:value', v3)
+    ml_gp.set_parameter('white_noise:value', v3[i])
 
     ml_mu, _ = ml_gp.predict(residuals, dates, return_var=True, kernel=kerneldprime)
     nudot_arr[i,:] = f1 - ml_mu/period/86400.**2
@@ -195,14 +195,18 @@ med = np.percentile(nudot_arr, 50., axis=0)
 low = med - np.percentile(nudot_arr, 16., axis=0)
 upp = np.percentile(nudot_arr, 84., axis=0) - med
 
+median_of_medians = np.median(med)
+logscale = np.floor(np.log10(np.abs(median_of_medians)))
+
 mjds = data[:,0]
 
-plt.errorbar(mjds, med*1e12, yerr=[upp*1e12, low*1e12], fmt=".", color="k")
+plt.errorbar(mjds, med*(10**(-logscale)), yerr=[upp*(10**(-logscale)), low*(10**(-logscale))], fmt=".", color="k")
+plt.title(pulsar)
 plt.xlabel("Time (MJD)")
-plt.ylabel(r"$\dot{\nu} (\times 10^{-12})$ (Hz$^{-2}$)")
+plt.ylabel(r"$\dot{\nu} (\times 10^{%i})$ (Hz$^{-2}$)" %logscale)
 plt.tight_layout()
-plt.savefig("./new_test.png", dpi=200)
-plt.show()
-plt.close()
+plt.savefig("./outdir/{0}_nudot_timeseries.png".format(args.pulsar), dpi=200)
+#plt.show()
+#plt.close()
 
 np.savetxt("./outdir/{0}_nudot.txt".format(args.pulsar), np.c_[mjds, med, low, upp].T)
