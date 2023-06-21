@@ -198,6 +198,16 @@ upp = np.percentile(nudot_arr, 84., axis=0) - med
 median_of_medians = np.median(med)
 logscale = np.floor(np.log10(np.abs(median_of_medians)))
 
+#AK: metric to determine how well the nudot timeseries agree with a straight line.
+yardstick = upp + low
+parameter1 = (np.minimum(np.abs(med + upp - f1), np.abs(med - low - f1))/yardstick)**2
+parameter2 = (np.minimum(np.abs(med + upp - median_of_medians), np.abs(med - low - median_of_medians))/yardstick)**2
+metric1 = np.sqrt(np.sum(parameter1))
+metric2 = np.sqrt(np.sum(parameter2))
+with open('outdir/'+pulsar+'_nudot_flatness.txt', 'w') as f:
+        f.write(pulsar+' '+str(metric1)+' '+str(metric2)+'\n')
+        f.close()
+###################
 mjds = data[:,0]
 
 plt.errorbar(mjds, med*(10**(-logscale)), yerr=[upp*(10**(-logscale)), low*(10**(-logscale))], fmt=".", color="k")
