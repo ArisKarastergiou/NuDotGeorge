@@ -4,6 +4,7 @@
 import argparse
 import bilby
 import george
+from george.utils import multivariate_gaussian_samples
 import os
 
 import numpy as np
@@ -28,8 +29,7 @@ def get_gp(profile, t):
         return -gp.grad_log_likelihood(y, quiet=True)
 
     k1 = 1e-5 * kernels.ExpSquaredKernel(metric=10.0)
-    k2 = 1.0 * kernels.ExpSquaredKernel(metric=10)
-    kernel = k1 #+ k2
+    kernel = k1 
     y = profile
     gp = george.GP(kernel, mean=np.mean(y), fit_mean=True,
                white_noise=np.log(1e-5), fit_white_noise=True)
@@ -48,8 +48,9 @@ def get_gp(profile, t):
     return gp
 
 
-def drive_gp(profile, t, logamplitude, scale, lognoise):
-    kernel = np.exp(logamplitude) * kernels.ExpSquaredKernel(metric=scale)
+def drive_gp(profile, t, logamplitude, logscale, lognoise):
+    kernel = np.exp(logamplitude) * kernels.ExpSquaredKernel(metric=np.exp(logscale))
+    print("AK: drive_gp: ", kernel.get_parameter_vector())
     y = profile
     gp = george.GP(kernel, mean=np.mean(y), fit_mean=True,
                white_noise=lognoise, fit_white_noise=True)
@@ -93,6 +94,7 @@ data = np.genfromtxt(filename, delimiter=" ")
 residuals = data[:,1]
 errors = data[:,2] * 1e-6
 dates = data[:,0]-data[0,0]
+mjds = data[:,0]
 #plt.figure()
 #plt.title(pulsar)
 #plt.plot(dates, residuals, ".")
@@ -120,19 +122,20 @@ print("The period and nudot from the ephemeris are:", period, f1)
 # Set up the kernal of the double derivative with some dummy parameters
 print("Setting up kernel")
 k1 = 1e-5 * kernels.ExpSquaredKernel(10.0)
-k2 = 1.0 * kernels.ExpSquaredKernel(10.0)
-ktot = k1 #+ k2
+#k2 = 1.0 * kernels.ExpSquaredKernel(10.0)
+#ktot = k1 #+ k2
 
 ConstantMeanModel = bilby.core.likelihood.function_to_george_mean_model(constant_function)
 mean_model = ConstantMeanModel(a=0)
 
-likelihood = bilby.core.likelihood.GeorgeLikelihood(kernel=ktot, mean_model=mean_model, t=dates, y=residuals, yerr=errors)
+likelihood = bilby.core.likelihood.GeorgeLikelihood(kernel=k1, mean_model=mean_model, t=dates, y=residuals, yerr=errors)
 
 priors = bilby.core.prior.PriorDict()
-priors["mean:a"] = bilby.core.prior.Uniform(-20, 20, name="a", latex_label=r"$a$")
+print("priors: ", priors)
+priors["mean:a"] = bilby.core.prior.Uniform(-1., 1., name="a", latex_label=r"$a$")
 priors["kernel:k1:log_constant"] = bilby.core.prior.Uniform(-20, 20, name="log_A", latex_label=r"$\ln A$")
-priors["kernel:k2:metric:log_M_0_0"] = bilby.core.prior.Uniform(-20, 20, name="log_M_0_0", latex_label=r"$\ln M_{00}$")
-priors["white_noise:value"] = bilby.core.prior.Uniform(-20, 20, name="sigma", latex_label=r"$\sigma$")
+priors["kernel:k2:metric:log_M_0_0"] = bilby.core.prior.Uniform(0, 20, name="log_M_0_0", latex_label=r"$\ln M_{00}$")
+priors["white_noise:value"] = bilby.core.prior.Uniform(-25, -15, name="sigma", latex_label=r"$\sigma$")
 
 if os.path.exists("outdir/{0}_result.json".format(pulsar)) == False:
     result = bilby.run_sampler(
@@ -154,44 +157,60 @@ else:
     result = bilby.core.result.read_in_result("outdir/{0}_result.json".format(pulsar))
 
 # extract samples
+mean_posts = result.posterior["mean:a"].values
 log_A_posts = result.posterior["kernel:k1:log_constant"].values
 log_M00_posts = result.posterior["kernel:k2:metric:log_M_0_0"].values
 white_noise = result.posterior["white_noise:value"].values
 
-np.random.seed(0)
-v1 = np.random.choice(log_A_posts,1000)
-v2 = np.random.choice(log_M00_posts,1000)
-v3 = np.random.choice(white_noise,1000)
+# create array of gp parameter vectors (scale mean appropriately for nudot calculation)
+#newvector_all = np.column_stack((mean_posts/86400.**2, white_noise-2.*np.log(86400.), log_A_posts-2.*np.log(86400.), log_M00_posts))
+#newvector_all = np.column_stack((mean_posts, white_noise, log_A_posts, log_M00_posts))
+newvector_all = np.column_stack((np.zeros(white_noise.shape), white_noise, log_A_posts, log_M00_posts))
 
+np.random.seed(0)
+idx = np.random.randint(newvector_all.shape[0], size=1000)
+
+#pmean = np.random.choice(mean_posts/period/86400.**2,1000) 
+#pmean = np.zeros(1000)
+#logA = np.random.choice(log_A_posts,1000)
+#logMetric = np.random.choice(log_M00_posts,1000)
+#logNoise = np.random.choice(white_noise,1000)
+#newvector = np.column_stack((pmean, logNoise, logA, logMetric))
+
+newvector = newvector_all[idx,:]
 
 nudot_arr = np.zeros((1000, len(dates)))
-#ml_gp = drive_gp(residuals, dates, np.exp(v1), np.exp(v2), np.exp(v3))
-ml_gp = drive_gp(residuals, dates, v1[0], np.exp(v2[0]), v3[0])
+ml_gp = drive_gp(residuals, dates, newvector[0,2], newvector[0,3], newvector[0,1])
 kernel_params = ml_gp.get_parameter_vector()
+#kernel parameters are log AMP log metric
+print("kernel params: ",k1.get_parameter_names())
+print("kernel params: ",k1.get_parameter_vector())
+print("gp kernel params: ",ml_gp.get_parameter_names())
+#gp kernel parameters are log mean, log noise, log amp, metric (NOT LOG!!)
+print("gp kernel params: ", kernel_params)
 #repeat the same random numbers
 for i in range(0, 1000):
 
-    #mean (cannot set this way but just illustrating)    
-        #kernel_params[0] = 0.0
-    #log noise (also cannot set this way)
-        #kernel_params[1] = v3
-    # log amplitude
-    kernel_params[2] = v1[i]
-    # metric
-    kernel_params[3] = np.exp(v2[i])
-
-    # set up dderivative kernel with dummy parameters
-    kerneldprime = 100 * kernels.ExpSquaredDoublePrimeKernel(10.0)
-    # Set metric and amplitude for dderivative kernel
-    kerneldprime.set_parameter_vector(kernel_params[2:])
-    # Set mean to 0 and noise to v3
-    ml_gp.set_parameter('mean:value',0.0)
-    ml_gp.set_parameter('white_noise:value', v3[i])
-
-    ml_mu, _ = ml_gp.predict(residuals, dates, return_var=True, kernel=kerneldprime)
-    nudot_arr[i,:] = f1 - ml_mu/period/86400.**2
+    # Set gp parameters from samples
+    #ml_gp.set_parameter('mean:value',0.0)
+    #ml_gp.set_parameter('white_noise:value',logNoise[i])
+    #ml_gp.set_parameter('kernel:k1:log_constant',logA[i])
+    #ml_gp.set_parameter('kernel:k2:metric:log_M_0_0', logMetric[i])
+    ml_gp.set_parameter_vector(newvector[i])
+    kernel2prime = np.exp(newvector[i,2]) * kernels.ExpSquaredDoublePrimeKernel(np.exp(newvector[i,3]))
+    kernel4prime = np.exp(newvector[i,2]) * kernels.ExpSquaredFourPrimeKernel(np.exp(newvector[i,3]))
+    #ml_gp.compute(dates)
+    #ml_mu = ml_gp.sample_conditional(residuals, dates, kernel=kernel2prime, k2=kernel4prime)
+    ml_mu, cov, cov_minus = ml_gp.predict(residuals, dates, return_cov=True, kernel=kernel2prime, k2=kernel4prime)
+    mycov = cov - cov_minus/period/86400.**2
+    sample = multivariate_gaussian_samples(mycov, 1, mean=ml_mu)#/86400.**2)
+    #print(sample.shape)
+    #print(np.sqrt(np.diag(cov)))
+    #print(ml_gp.get_parameter_vector(), kernel2prime.get_parameter_vector())
+    nudot_arr[i,:] = f1 - sample/period/86400.**2
 
 med = np.percentile(nudot_arr, 50., axis=0)
+print(nudot_arr.shape,med.shape, np.std(nudot_arr[:,20]))
 low = med - np.percentile(nudot_arr, 16., axis=0)
 upp = np.percentile(nudot_arr, 84., axis=0) - med
 
@@ -208,8 +227,7 @@ with open('outdir/'+pulsar+'_nudot_flatness.txt', 'w') as f:
         f.write(pulsar+' '+str(metric1)+' '+str(metric2)+'\n')
         f.close()
 ###################
-mjds = data[:,0]
-
+plt.figure()
 plt.errorbar(mjds, med*(10**(-logscale)), yerr=[upp*(10**(-logscale)), low*(10**(-logscale))], fmt=".", color="k")
 plt.title(pulsar)
 plt.xlabel("Time (MJD)")
