@@ -18,7 +18,6 @@ from os.path import basename
 # Define all functions
 def drive_gp(profile, t, logamplitude, logscale, lognoise):
     kernel = np.exp(logamplitude) * kernels.ExpSquaredKernel(metric=np.exp(logscale))
-    print("AK: drive_gp: ", kernel.get_parameter_vector())
     y = profile
     gp = george.GP(kernel, mean=np.mean(y), fit_mean=True,
                white_noise=lognoise, fit_white_noise=True)
@@ -39,9 +38,8 @@ s with George')
 parser.add_argument('-f','--filename', help='File containing residuals', required=True)
 parser.add_argument('-e','--parfile', help='ephemeris for nudot', required=True)
 parser.add_argument('-p','--pulsar', help='Pulsar name', required=True)
-# parser.add_argument('-d','--diagnosticplots', help='make image plots', action='store_true',required = False)
 #------------------------------
-samples = 100
+
 args = parser.parse_args()
 filename = args.filename
 parfile = args.parfile
@@ -58,8 +56,8 @@ pulsar = args.pulsar
 data = np.genfromtxt(filename, delimiter=" ")
 residuals = data[:,1]
 errors = data[:,2] * 1e-6
-dates = data[:,0]-data[0,0]
 mjds = data[:,0]
+dates = mjds-data[0,0]
 
 # Load the parfile to extract epoch and nudot
 q = open(parfile)
@@ -79,12 +77,12 @@ print("The period and nudot from the ephemeris are:", period, f1)
 
 # Set up the kernal of the double derivative with some dummy parameters
 print("Setting up kernel")
-k1 = 1e-5 * kernels.ExpSquaredKernel(10.0)
+model_kernel = 1e-5 * kernels.ExpSquaredKernel(10.0)
 
 ConstantMeanModel = bilby.core.likelihood.function_to_george_mean_model(constant_function)
 mean_model = ConstantMeanModel(a=0)
 
-likelihood = bilby.core.likelihood.GeorgeLikelihood(kernel=k1, mean_model=mean_model, t=dates, y=residuals, yerr=errors)
+likelihood = bilby.core.likelihood.GeorgeLikelihood(kernel=model_kernel, mean_model=mean_model, t=dates, y=residuals, yerr=errors)
 # Set up priors for nested sampling
 priors = bilby.core.prior.PriorDict()
 print("priors: ", priors)
