@@ -89,9 +89,9 @@ likelihood = bilby.core.likelihood.GeorgeLikelihood(kernel=k1, mean_model=mean_m
 priors = bilby.core.prior.PriorDict()
 print("priors: ", priors)
 priors["mean:a"] = bilby.core.prior.Uniform(-1., 1., name="a", latex_label=r"$a$")
+priors["white_noise:value"] = bilby.core.prior.Uniform(-25, -15, name="sigma", latex_label=r"$\sigma$")
 priors["kernel:k1:log_constant"] = bilby.core.prior.Uniform(-30, 2, name="log_A", latex_label=r"$\ln A$")
 priors["kernel:k2:metric:log_M_0_0"] = bilby.core.prior.Uniform(0, 30, name="log_M_0_0", latex_label=r"$\ln M_{00}$")
-priors["white_noise:value"] = bilby.core.prior.Uniform(-25, -15, name="sigma", latex_label=r"$\sigma$")
 
 if os.path.exists("outdir/{0}_result.json".format(pulsar)) == False:
     result = bilby.run_sampler(
@@ -128,7 +128,6 @@ newvector = newvector_all[idx,:]
 
 nudot_arr = np.zeros((1000, len(dates)))
 ml_gp = drive_gp(residuals, dates, newvector[0,2], newvector[0,3], newvector[0,1])
-kernel_params = ml_gp.get_parameter_vector()
 
 #repeat the same random numbers
 for i in range(0, 1000):
@@ -173,7 +172,7 @@ plt.figure()
 plt.errorbar(mjds, med*(10**(-logscale)), yerr=[upp*(10**(-logscale)), low*(10**(-logscale))], fmt=".", color="k")
 plt.title(pulsar)
 plt.xlabel("Time (MJD)")
-plt.ylabel(r"$\dot{\nu} (\times 10^{%i})$ (Hz$^{-2}$)" %logscale)
+plt.ylabel(r"$\dot{\nu} (\times 10^{%i})$ (s$^{-2}$)" %logscale)
 plt.tight_layout()
 plt.savefig("./outdir/{0}_nudot_timeseries.png".format(args.pulsar), dpi=200)
 #plt.show()
